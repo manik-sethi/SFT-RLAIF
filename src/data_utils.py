@@ -1,51 +1,83 @@
 from datasets import load_dataset
 import numpy as np
 from src.model import load_tokenizer
+from typing import Dict, List, Any
 
-id = "yahma/alpaca-cleaned"
 
-tokenizer = load_tokenizer("Qwen/Qwen3-0.6B")
+tokenizer = load_tokenizer("Qwen/Qwen3-0.6B-Base")
+def tok_fn(examples) -> Dict[str, List[Any]]:
 
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
+    input_ids = []
+    attention_mask = []
+    labels = []
 
-def template_and_tokenize(example):
-    if example['input']:
-        prompt = (
-            f"### Instruction: {example['instruction']}\n\n" +
-            f"### Input: {example['input']}\n\n" +
-            f"### Response:\n"
-        )
-    else:
-        prompt = (
-            f"### Instruction: {example['instruction']}\n\n" +
-            f"### Response:\n"
-        )
+    prompts = []
+    full_texts = []
 
-    full_text = prompt + example['output']
+    for output, input_text, instruction in zip(
+        examples['output'],
+        examples['input'],
+        examples['instruction']
+    ):
+  
+        if input_text:
+            prompt = (
+                f"### Instruction: {instruction}\n\n" +
+                f"### Input: {input_text}\n\n" +
+                f"### Response:\n"
+            )
+        else:
+            prompt = (
+                f"### Instruction: {instruction}\n\n" +
+                f"### Response:\n"
+            )
 
-    prompt_ids = tokenizer(prompt, add_special_tokens=False)['input_ids']
-    full_ids = tokenizer(full_text, add_special_tokens=False, truncation=True, max_length=2048, padding='max_length', return_tensors=None)
 
-    input_ids = np.array(full_ids['input_ids'])
-    prompt_length = len(prompt_ids)
+        prompts.append(prompt)
+        full_texts.append(prompt + output)
+        
+    full_tok = tokenizer(
+        full_texts, 
+        truncation=True, 
+        max_length=2048, 
+        add_special_tokens=False,
+        padding=False
+    )
+    
+    prompt_tok = tokenizer(
+        prompts,
+        add_special_tokens=False,
+        padding=False
+    )
+    
+    labels = []
+    for f_ids, p_ids in zip(full_tok['input_ids'], prompt_tok['input_ids']):
+        p = min(len(p_ids), len(f_ids))
+        labels.append([-100]*p + f_ids[p:])
 
-    labels = input_ids.copy()
-    labels[:prompt_length] = -100
-    labels[input_ids == tokenizer.pad_token_id] = -100
-    labels = labels.tolist()
+
     return {
-        'input_ids': full_ids['input_ids'],
-        'attention_mask': full_ids['attention_mask'],
+        'input_ids': full_tok['input_ids'],
+        'attention_mask': full_tok['attention_mask'],
         'labels': labels
     }
 
-def clean_dataset(hf_id):
+
+def return_dataset(hf_id):
+
     data = load_dataset(hf_id)
-    
-    return data.map(
-        template_and_tokenize,
-        remove_columns=data['train'].column_names,
-        load_from_cache_file=False
+
+    dataset = data.map(
+        tok_fn,
+        batched=True,
+        batch_size = 2000,
+        num_proc=4,
+        load_from_cache_file=False,
+        remove_columns=data['train'].column_names   
     )
 
+    # dataset.set_format(
+    # type="torch",
+    # columns=['input_ids', 'attention_mask', 'labels']
+    # )
+    return dataset
