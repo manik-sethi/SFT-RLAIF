@@ -20,10 +20,7 @@ model = get_peft_model(model, peft_config)
 model.print_trainable_parameters()
 
 
-
 dataset = return_dataset("yahma/alpaca-cleaned")
-
-
 
 
 def sft_collate(features):
@@ -40,7 +37,7 @@ def sft_collate(features):
     for f in features:
         lab = f["labels"]
         if len(lab) > max_len:
-            lab = lab[:max_len]  # safety, shouldn't usually happen if you truncate consistently
+            lab = lab[:max_len]
         lab = lab + [-100] * (max_len - len(lab))
         labels.append(lab)
 
@@ -54,7 +51,7 @@ training_args = TrainingArguments(
     bf16=True,
 
     num_train_epochs=3,
-    per_device_train_batch_size=8,
+    per_device_train_batch_size=4,
     learning_rate=2e-4,
     dataloader_num_workers = 16,
     dataloader_prefetch_factor = 4,
