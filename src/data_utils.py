@@ -81,3 +81,51 @@ def return_dataset(hf_id):
     # columns=['input_ids', 'attention_mask', 'labels']
     # )
     return dataset
+
+
+def prompt_combiner(example):
+
+  return {
+      "good": example['policy_prompt'] + example['winner_response'],
+      "bad": example['policy_prompt'] + example['loser_response']
+  }
+
+def reward_model_collate_fn(batch):
+    """
+    Tokenizes and prepares the batch for the Reward Model.
+    """
+    # 1. Extract the 'good' and 'bad' text lists from the batch
+    good_texts = [item['good'] for item in batch]
+    bad_texts = [item['bad'] for item in batch]
+    
+    # 2. Tokenize and pad the 'good' texts
+    tokenized_good = tokenizer(
+        good_texts, 
+        return_tensors="pt",  # Return PyTorch Tensors
+        padding=True,         # Pad all sequences to the longest in the batch
+        truncation=True       # Truncate if necessary
+    )
+    
+    # 3. Tokenize and pad the 'bad' texts
+    tokenized_bad = tokenizer(
+        bad_texts, 
+        return_tensors="pt",
+        padding=True,
+        truncation=True
+    )
+    
+    # 4. Return a dictionary containing the necessary tensors
+    return {
+        'good': tokenized_good['input_ids'], # Only input_ids are typically needed for RM
+        'bad': tokenized_bad['input_ids']
+    }
+def reward_model_dataset(hf_id:str = "RLAIF/webgpt"):
+    data = load_dataset(hf_id)
+
+    data = data.map(
+    prompt_combiner,
+    remove_columns=data['train'].column_names
+)
+    return data
+
+    
