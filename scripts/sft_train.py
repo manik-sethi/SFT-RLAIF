@@ -3,6 +3,10 @@ from src.model import load_model, load_tokenizer
 from src.data_utils import return_dataset
 from transformers import TrainingArguments, Trainer, default_data_collator, DataCollatorWithPadding
 import torch
+import os
+
+from trl import SFTTrainer, SFTConfig
+from src.sft_data import sft_dataset
 
 model = load_model("Qwen/Qwen3-0.6B")
 model.to("cuda")
@@ -16,59 +20,40 @@ peft_config = LoraConfig(
     lora_alpha=32,
     task_type=TaskType.CAUSAL_LM
 )
-model = get_peft_model(model, peft_config)
-model.print_trainable_parameters()
 
+dataset = sft_dataset()
 
-dataset = return_dataset("yahma/alpaca-cleaned")
+dataset = dataset.train_test_split(test_size=0.05, seed=67)
 
+os.environ["WANDB_LOG_MODEL"]= "end"
+os.environ["WANDB_WATCH"] = "false"
 
-def sft_collate(features):
-    # 1) Pad input_ids + attention_mask (and any other standard model inputs)
-    batch = tokenizer.pad(
-        [{"input_ids": f["input_ids"], "attention_mask": f["attention_mask"]} for f in features],
-        padding=True,
-        return_tensors="pt",
-    )
-
-    # 2) Manually pad labels to the same length with -100
-    max_len = batch["input_ids"].shape[1]
-    labels = []
-    for f in features:
-        lab = f["labels"]
-        if len(lab) > max_len:
-            lab = lab[:max_len]
-        lab = lab + [-100] * (max_len - len(lab))
-        labels.append(lab)
-
-    batch["labels"] = torch.tensor(labels, dtype=torch.long)
-    return batch
-
-
-
-training_args = TrainingArguments(
-    "../models/test_trainer", 
+args = SFTConfig(
+    dataset_text_field='messages',
+    num_train_epochs=2,
+    learning_rate = 2e-5,
+    lr_scheduler_type="cosine",
+    logging_steps=10,
+    save_steps=10000,
+    eval_steps=10000,
+    do_train = True,
+    do_eval = False,
+    per_device_train_batch_size = 16,
+    per_device_eval_batch_size = 32,
+    gradient_accumulation_steps= 8,
     bf16=True,
+    assistant_only_loss = True,
 
-    num_train_epochs=3,
-    per_device_train_batch_size=4,
-    learning_rate=2e-4,
-    dataloader_num_workers = 16,
-    dataloader_prefetch_factor = 4,
-    gradient_accumulation_steps=2
-    )
+    report_to='wandb',
+    output_dir='../models/instruction-tuned',
+    hub_strategy="every_save"
+)
 
-
-split = dataset['train'].train_test_split(test_size=0.05, seed=32)
-
-
-trainer = Trainer(
-    model,
-    training_args,
-    train_dataset = split['train'],
-    eval_dataset= split['test'],
-    data_collator=sft_collate,
-    processing_class=tokenizer
+trainer = SFTTrainer(
+    model = "Qwen/Qwen3-0.6B",
+    train_dataset = dataset['train'],
+    eval_dataset = dataset['test'],
+    peft_config = peft_config,
 )
 
 trainer.train()
